@@ -1,0 +1,29 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local environment
+.venv/
+venv/
+.env
+
+# Temporary files
+*.tmp
+*.log
+
+# Large data files
+sample_data/
+*.raw
+*.zip
+*.7z
+*.rar
+
+# Full simulation or original data
+full_data/
+calpuff_output/
+raw_original_data/
+original_data/

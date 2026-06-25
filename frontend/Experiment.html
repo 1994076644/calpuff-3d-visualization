@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CALPUFF 时序体渲染透明度实验</title>
+
+ 
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #info {
+      position: fixed;
+      left: 12px;
+      top: 12px;
+      z-index: 10;
+      padding: 8px 12px;
+      color: #ffffff;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.6;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #tips {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 10;
+      padding: 8px 12px;
+      color: #dcdcdc;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.7;
+      pointer-events: none;
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+        "three": "../threejs/build/three.module.js",
+        "three/addons/": "../threejs/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="info">正在加载 CALPUFF 体渲染实验数据...</div>
+
+  <div id="tips">
+    鼠标左键：旋转视角<br />
+    鼠标滚轮：缩放<br />
+    右侧 GUI：切换透明度方法、导出指标、保存截图
+  </div>
+
+  
+ 
+  <script type="module" src="./Experiment.js"></script>
+</body>
+</html>
