@@ -380,7 +380,7 @@ function computeFrameAlphaStats(volumeData) {
   }
   vals.sort((a, b) => a - b);
 
-  
+  // 当前帧自适应阈值：用非零浓度的 5% 和 95% 分位数，避免被 0 和极端最大值控制
   return {
     tLow: quantileSorted(vals, 0.05),
     tHigh: quantileSorted(vals, 0.95),
@@ -511,7 +511,6 @@ function computePollutionMetrics(volumeData, meta, targetDepth, params = {}) {
   };
 }
 
-// ===================== 三维污染场地面投影 =====================
 
 function computeGroundRiskProjection(volumeData, meta, targetDepth, params = {}) {
   const width = meta.width;
@@ -525,13 +524,13 @@ function computeGroundRiskProjection(volumeData, meta, targetDepth, params = {})
   const cThreshold = params.concentrationThreshold ?? 0.05;
   const mode = params.projectionMode ?? 'max';
 
-  // 每个地面网格的投影浓度
+ 
   const cProj = new Float32Array(width * height);
 
-  // 是否属于地面影响范围
+ 
   const riskMask = new Uint8Array(width * height);
 
-  // 是否为边界网格
+ 
   const boundaryMask = new Uint8Array(width * height);
 
   let affectedCellCount = 0;
@@ -541,16 +540,16 @@ function computeGroundRiskProjection(volumeData, meta, targetDepth, params = {})
   const idx2D = (x, y) => y * width + x;
   const idx3D = (x, y, z) => z * sliceSize + y * width + x;
 
-  // 1. 计算地面投影浓度 C_proj(x,y)
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       let cValue = 0.0;
 
       if (mode === 'ground') {
-        // 只取最底层，z = 0
+        
         cValue = volumeData[idx3D(x, y, 0)];
       } else {
-        // 垂直最大浓度投影：max_z C(x,y,z)
+      
         let maxC = 0.0;
         for (let z = 0; z < depth; z++) {
           const c = volumeData[idx3D(x, y, z)];
@@ -727,7 +726,9 @@ function evaluateAlphaAndPollutionMetrics(volumeData, meta, targetDepth, frameSt
 
   const concentrationThreshold = params.concentrationThreshold ?? 0.05;
   const visibleThreshold = params.visibleThreshold ?? 0.01;
-  const saturationThreshold = params.saturationThreshold ?? 0.80;
+ 
+  const lowWingMinThreshold = params.lowWingMinThreshold ?? 0.001;
+  const lowWingMaxThreshold = params.lowWingMaxThreshold ?? concentrationThreshold;
 
   const pollutionMetrics = computePollutionMetrics(volumeData, meta, targetDepth, params);
   const rows = [];
@@ -735,14 +736,22 @@ function evaluateAlphaAndPollutionMetrics(volumeData, meta, targetDepth, frameSt
   for (let mode = 0; mode < METHOD_NAMES.length; mode++) {
     let nonzero = 0;
     let visible = 0;
-    let saturated = 0;
     let sumOpacity = 0;
     let edgeSum = 0;
     let edgeN = 0;
     let innerSum = 0;
     let innerN = 0;
 
-    
+    // 低浓度羽翼可见性：统计低于风险阈值、但高于最低有效浓度的羽翼区域是否被有效显示
+    let lowWingTotal = 0;
+    let lowWingVisible = 0;
+    let lowWingOpacitySum = 0;
+
+    // 辅助指标：低于羽翼下限的极低浓度区域被显示的比例，用于判断是否过度显示背景低值区
+    let veryLowVisible = 0;
+    let belowRiskVisible = 0;
+
+    // IoU：浓度超阈值区域 Mask_C 与可视化可见区域 Mask_alpha 的一致性
     let inter = 0;
     let union = 0;
 
@@ -762,7 +771,25 @@ function evaluateAlphaAndPollutionMetrics(volumeData, meta, targetDepth, frameSt
       sumOpacity += od;
 
       if (od > visibleThreshold) visible++;
-      if (od > saturationThreshold) saturated++;
+
+      const isLowWing = c >= lowWingMinThreshold && c < lowWingMaxThreshold;
+      const isVeryLow = c > 0.0 && c < lowWingMinThreshold;
+
+      if (c < concentrationThreshold && maskAlpha) {
+        belowRiskVisible++;
+      }
+
+      if (isLowWing) {
+        lowWingTotal++;
+        lowWingOpacitySum += od;
+        if (maskAlpha) {
+          lowWingVisible++;
+        }
+      }
+
+      if (isVeryLow && maskAlpha) {
+        veryLowVisible++;
+      }
 
       if (grad[i] >= edgeThreshold) {
         edgeSum += od;
@@ -780,9 +807,15 @@ function evaluateAlphaAndPollutionMetrics(volumeData, meta, targetDepth, frameSt
       minute,
       method: METHOD_NAMES[mode],
       visible_ratio: visible / Math.max(nonzero, 1),
-      saturated_ratio: saturated / Math.max(nonzero, 1),
       edge_enhancement_ratio: edgeMean / Math.max(innerMean, 1e-6),
       mean_opacity: sumOpacity / Math.max(nonzero, 1),
+
+      low_wing_visible_ratio: lowWingVisible / Math.max(lowWingTotal, 1),
+      low_wing_mean_opacity: lowWingOpacitySum / Math.max(lowWingTotal, 1),
+      low_wing_voxels: lowWingTotal,
+      low_wing_visible_voxels: lowWingVisible,
+      low_wing_visible_precision: lowWingVisible / Math.max(belowRiskVisible, 1),
+      very_low_visible_ratio: veryLowVisible / Math.max(nonzero, 1),
 
       V_exceed_km3: pollutionMetrics.V_exceed_km3,
       A_exceed_km2: pollutionMetrics.A_exceed_km2,
@@ -794,6 +827,8 @@ function evaluateAlphaAndPollutionMetrics(volumeData, meta, targetDepth, frameSt
       affected_xy_cells: pollutionMetrics.affected_xy_cells,
       concentration_threshold: concentrationThreshold,
       visible_threshold: visibleThreshold,
+      low_wing_min_threshold: lowWingMinThreshold,
+      low_wing_max_threshold: lowWingMaxThreshold,
       tLow: frameStats.tLow,
       tHigh: frameStats.tHigh,
     });
@@ -947,14 +982,13 @@ async function init(minute) {
             const rawRes = await fetch(rawUrl);
             const rawBuffer = await rawRes.arrayBuffer();
             
-            // 3. 完美的安全校验
+           
             const expectedSize = meta.width * meta.height * meta.depth * 4;
             if (rawBuffer.byteLength !== expectedSize) {
                 throw new Error(`文件大小不匹配! 期望 ${expectedSize}, 实际 ${rawBuffer.byteLength}`);
             }
         
-            // 4. 解析为 3D 纹理并更新材质
-           
+            
             // ... 此处生成 THREE.Data3DTexture ...
            const data = new Float32Array(rawBuffer);
 
@@ -1076,9 +1110,10 @@ async function init(minute) {
 
             const experimentParams = {
               alphaMethod: 'M4 本文方法',
-              concentrationThreshold: 0.05, 
+              concentrationThreshold: 0.05, // 归一化浓度阈值；如果要用真实浓度，需要在生成 raw 时保留真实值或再乘 local_max_val
               visibleThreshold: 0.01,
-              saturationThreshold: 0.80,
+              lowWingMinThreshold: 0.001,
+              lowWingMaxThreshold: 0.05,
 
               导出当前帧指标CSV: () => {
                 const rows = evaluateAlphaAndPollutionMetrics(
@@ -1098,7 +1133,8 @@ async function init(minute) {
                     alphaMax: uniforms.u_alphaMax.value,
                     concentrationThreshold: experimentParams.concentrationThreshold,
                     visibleThreshold: experimentParams.visibleThreshold,
-                    saturationThreshold: experimentParams.saturationThreshold,
+                    lowWingMinThreshold: experimentParams.lowWingMinThreshold,
+                    lowWingMaxThreshold: experimentParams.lowWingMaxThreshold,
                   }
                 );
                 console.table(rows);
@@ -1114,7 +1150,8 @@ async function init(minute) {
                   alphaMax: uniforms.u_alphaMax.value,
                   concentrationThreshold: experimentParams.concentrationThreshold,
                   visibleThreshold: experimentParams.visibleThreshold,
-                  saturationThreshold: experimentParams.saturationThreshold,
+                  lowWingMinThreshold: experimentParams.lowWingMinThreshold,
+                  lowWingMaxThreshold: experimentParams.lowWingMaxThreshold,
                 });
               },
 
@@ -1158,7 +1195,8 @@ async function init(minute) {
 
             algoFolder.add(experimentParams, 'concentrationThreshold', 0.001, 0.5, 0.001).name('污染阈值Cth');
             algoFolder.add(experimentParams, 'visibleThreshold', 0.001, 0.5, 0.001).name('可见阈值alpha');
-            algoFolder.add(experimentParams, 'saturationThreshold', 0.1, 1.0, 0.01).name('饱和阈值');
+            algoFolder.add(experimentParams, 'lowWingMinThreshold', 0.0001, 0.05, 0.0001).name('羽翼下限Cmin');
+            algoFolder.add(experimentParams, 'lowWingMaxThreshold', 0.001, 0.2, 0.001).name('羽翼上限Cmax');
             algoFolder.add(uniforms.u_tLow, 'value', 0, 1, 0.01).name('M4窗口低阈值');
             algoFolder.add(uniforms.u_tHigh, 'value', 0, 1, 0.01).name('M4窗口高阈值');
             algoFolder.add(uniforms.u_lambdaGrad, 'value', 0, 2, 0.05).name('梯度增强λ');
@@ -1171,6 +1209,8 @@ async function init(minute) {
             algoFolder.add(experimentParams, '导出地面投影CSV').name('导出地面投影CSV');
             algoFolder.add(experimentParams, '导出全部实验指标CSV').name('导出全部实验指标CSV');
             algoFolder.add(experimentParams, '保存当前截图').name('保存当前截图');
+            // algoFolder.add(uniforms.u_isoValue, 'value', 0, 1, 0.04).name('阈值');
+            // algoFolder.add(uniforms.u_isoRange, 'value', 0, 1, 0.04).name('边缘范围');
             algoFolder.open();
             
             //立方体的创建和材质的设置
@@ -1243,14 +1283,15 @@ async function init(minute) {
 
             return out;
 }
-        const DEBUG_RAW_VIEW = false;     
-        const USE_Z_INTERP = false;      
+        const DEBUG_RAW_VIEW = false;     // 先看原始、不平滑的体数据,为T是最近邻采样，为F是线性插值采样
+        const USE_Z_INTERP = false;      // 关闭 z 向插值
 
         // 当前页面显示哪一分钟
         const DISPLAY_MINUTE = 50;
 
-
-        const EXPERIMENT_MINUTES = [40,50,60];//批量实验统计时间
+        
+        // const EXPERIMENT_MINUTES = Array.from({ length: 60 }, (_, i) => i + 1);
+        const EXPERIMENT_MINUTES = [20,30,40,50,60];//批量实验统计时间
 
         async function main() {
           init(DISPLAY_MINUTE);
